@@ -47,6 +47,19 @@ class SpaceWebViewClient(
             }
         }
 
+        // Ad click-throughs often navigate the current tab instead of opening a
+        // popup. Apply document rules to cross-site main-frame navigations too,
+        // while still allowing a URL the user typed into an empty tab.
+        val pageUrl = tab.url?.takeUnless { tab.showHome }
+        if (request.isForMainFrame && pageUrl != null &&
+            deps.settings().adBlockEnabled &&
+            adBlocker.shouldBlock(uri.toString(), pageUrl, AdResourceType.DOCUMENT)
+        ) {
+            tab.blockedOnPage++
+            deps.events.toast("Shield blocked an ad redirect")
+            return true
+        }
+
         // HTTPS upgrade: try the https version first, remember the original for
         // a one-shot fallback if the secure host doesn't answer.
         if (scheme == "http" && request.isForMainFrame &&
@@ -62,11 +75,19 @@ class SpaceWebViewClient(
 
     override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
         tab.errorMessage = null
+        // Keep the red certificate marker across redirects/repaints on the same
+        // host after an explicit one-time continuation. A different host starts
+        // with a clean security state.
+        if (UrlUtil.hostOf(tab.certificateErrorUrl) != UrlUtil.hostOf(url)) {
+            tab.certificateError = null
+            tab.certificateErrorUrl = null
+        }
         tab.isLoading = true
         tab.showHome = false
         tab.url = url
         tab.isSecure = url.startsWith("https://")
         tab.blockedOnPage = 0
+        deps.events.clearDetectedMedia(tab.id)
         deps.onNavigated(tab)
     }
 
@@ -102,6 +123,19 @@ class SpaceWebViewClient(
                 )
             }
         }
+        deps.scriptsFor(url).forEach { script ->
+            val quoted = JSONObject.quote(script.code)
+            val name = JSONObject.quote("SPACE extension ${script.name}")
+            view.evaluateJavascript(
+                """
+                (function(){
+                  try { (0,eval)($quoted); }
+                  catch(error) { console.error($name, error); }
+                })()
+                """.trimIndent(),
+                null,
+            )
+        }
         deps.onNavigated(tab)
     }
 
@@ -117,12 +151,39 @@ class SpaceWebViewClient(
     }
 
     override fun onReceivedSslError(view: WebView, handler: SslErrorHandler, error: SslError) {
-        // Secure by default: never proceed past a broken certificate.
-        handler.cancel()
-        if (tryHttpFallback(view, error.url)) return
-        tab.isLoading = false
-        tab.awaitingPaint = false
-        tab.errorMessage = "Connection blocked: this site's security certificate is not trusted."
+        if (tryHttpFallback(view, error.url)) {
+            handler.cancel()
+            return
+        }
+
+        // A broken third-party ad/resource certificate must never interrupt the
+        // whole page with a warning dialog.
+        val pageHost = UrlUtil.hostOf(tab.url)
+        val errorHost = UrlUtil.hostOf(error.url)
+        if (pageHost != null && errorHost != null && pageHost != errorHost) {
+            handler.cancel()
+            return
+        }
+
+        val reason = when (error.primaryError) {
+            SslError.SSL_EXPIRED -> "The certificate has expired."
+            SslError.SSL_IDMISMATCH -> "The certificate does not match this site."
+            SslError.SSL_NOTYETVALID -> "The certificate is not valid yet."
+            SslError.SSL_UNTRUSTED -> "The certificate authority is not trusted."
+            SslError.SSL_DATE_INVALID -> "The certificate date is invalid."
+            else -> "The certificate could not be verified."
+        }
+        tab.isSecure = false
+        tab.certificateError = reason
+        tab.certificateErrorUrl = error.url
+        deps.events.requestSslDecision(
+            SslWarningRequest(
+                tab = tab,
+                handler = handler,
+                url = error.url.orEmpty(),
+                reason = reason,
+            ),
+        )
     }
 
     /** If [failingUrl] is the https upgrade we attempted, retry plain http once. */
@@ -139,6 +200,7 @@ class SpaceWebViewClient(
     // Content blocking ----------------------------------------------------------
 
     override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
+        detectMedia(request.url.toString())
         val s = deps.settings()
         if (!s.adBlockEnabled) return null
         if (request.isForMainFrame) return null
@@ -152,6 +214,21 @@ class SpaceWebViewClient(
             return WebResourceResponse("text/plain", "utf-8", AdBlocker.emptyStream())
         }
         return null
+    }
+
+    private fun detectMedia(url: String) {
+        val clean = url.substringBefore('#').substringBefore('?').lowercase()
+        val kind = when {
+            clean.endsWith(".m3u8") -> "HLS"
+            clean.endsWith(".mpd") -> "DASH"
+            clean.endsWith(".mp4") -> "MP4"
+            clean.endsWith(".webm") -> "WebM"
+            clean.endsWith(".mkv") -> "MKV"
+            clean.endsWith(".m4v") -> "M4V"
+            clean.endsWith(".mov") -> "MOV"
+            else -> null
+        } ?: return
+        main.post { deps.events.detectMedia(tab.id, url, kind) }
     }
 
     private fun inferResourceType(request: WebResourceRequest): AdResourceType {
@@ -186,7 +263,10 @@ class SpaceWebViewClient(
 
     private companion object {
         val IMAGE_EXTENSIONS = setOf(".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".avif")
-        val MEDIA_EXTENSIONS = setOf(".mp4", ".webm", ".m3u8", ".mp3", ".m4a", ".ogg", ".wav")
+        val MEDIA_EXTENSIONS = setOf(
+            ".mp4", ".webm", ".m3u8", ".mpd", ".mkv", ".m4v", ".mov",
+            ".mp3", ".m4a", ".ogg", ".wav",
+        )
         val FONT_EXTENSIONS = setOf(".woff", ".woff2", ".ttf", ".otf")
     }
 }

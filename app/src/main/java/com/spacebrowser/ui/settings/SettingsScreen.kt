@@ -67,6 +67,7 @@ fun SettingsScreen(
     val scope = rememberCoroutineScope()
     val repo = container.settingsRepository
     val s by repo.flow.collectAsState(initial = container.tabManager.settings)
+    val userScripts by container.userScriptManager.scripts.collectAsState()
 
     var query by remember { mutableStateOf("") }
     fun visible(vararg labels: String): Boolean =
@@ -86,6 +87,12 @@ fun SettingsScreen(
     var aiKeyDialog by remember { mutableStateOf(false) }
     var aiModeDialog by remember { mutableStateOf(false) }
     var ytDlpDialog by remember { mutableStateOf(false) }
+    var exportCookiesDialog by remember { mutableStateOf(false) }
+    var importCookiesDialog by remember { mutableStateOf(false) }
+    var importExtensionDialog by remember { mutableStateOf(false) }
+    var developerToolsDialog by remember { mutableStateOf(false) }
+    var developerToolsInfoDialog by remember { mutableStateOf(false) }
+    var removeExtensionId by remember { mutableStateOf<String?>(null) }
 
     BackHandler(onBack = onBack)
 
@@ -290,6 +297,18 @@ fun SettingsScreen(
                     if (s.historyRetentionDays == 0) "Forever" else "${s.historyRetentionDays} days",
                 ) { retentionDialog = true }
             }
+            if (visible("Export current-site cookies", "cookie backup")) {
+                ActionRow(
+                    "Export current-site cookies",
+                    "Save the active site's cookie state as JSON",
+                ) { exportCookiesDialog = true }
+            }
+            if (visible("Import cookies into current site", "cookie restore")) {
+                ActionRow(
+                    "Import cookies into current site",
+                    "SPACE JSON, Cookie-Editor JSON, or Netscape format",
+                ) { importCookiesDialog = true }
+            }
 
             // Security ----------------------------------------------------------
             SectionHeader("Security", query)
@@ -377,6 +396,65 @@ fun SettingsScreen(
                 }
             }
 
+            // Extensions & developer tools ------------------------------------
+            SectionHeader("Extensions & developer tools", query)
+            if (visible("Import local extension", "userscript", "tampermonkey")) {
+                ActionRow(
+                    "Import local extension",
+                    "Install a .user.js script or SPACE extension bundle",
+                ) { importExtensionDialog = true }
+            }
+            if (visible("Export local extensions", "userscript backup")) {
+                ActionRow(
+                    "Export local extensions",
+                    "${userScripts.size} installed scripts",
+                ) { actions.exportUserScripts() }
+            }
+            userScripts.forEach { script ->
+                if (visible(script.name, "local extension", "userscript")) {
+                    SwitchRow(
+                        "Extension: ${script.name}",
+                        script.matches.take(2).joinToString().ifBlank { "All websites" },
+                        checked = script.enabled,
+                    ) { enabled ->
+                        container.userScriptManager.setEnabled(script.id, enabled)
+                        container.tabManager.activeTab?.webView?.reload()
+                    }
+                    ActionRow(
+                        "Remove ${script.name}",
+                        "Delete this local extension",
+                    ) { removeExtensionId = script.id }
+                }
+            }
+            if (visible("Chrome extensions", "CRX", "web store")) {
+                ActionRow(
+                    "Chrome extension compatibility",
+                    "WebView cannot run CRX/Manifest V3; local userscripts are supported",
+                ) {
+                    container.browserEvents.toast(
+                        "Full Chrome extensions require a Chromium-engine build",
+                    )
+                }
+            }
+            if (visible("Remote WebView DevTools", "chrome inspect", "developer tools")) {
+                SwitchRow(
+                    "Remote WebView DevTools",
+                    "Inspect pages from desktop Chrome at chrome://inspect",
+                    checked = s.developerToolsEnabled,
+                ) { enabled ->
+                    if (enabled) developerToolsDialog = true
+                    else scope.launch { repo.setDeveloperToolsEnabled(false) }
+                }
+            }
+            if (s.developerToolsEnabled &&
+                visible("How to connect DevTools", "chrome inspect", "USB debugging")
+            ) {
+                ActionRow(
+                    "How to connect DevTools",
+                    "USB debugging → chrome://inspect",
+                ) { developerToolsInfoDialog = true }
+            }
+
             // About -------------------------------------------------------------
             SectionHeader("More", query)
             if (visible("Downloads")) {
@@ -419,8 +497,8 @@ fun SettingsScreen(
                 Text(
                     "SPACE bundles the open-source yt-dlp engine and prepares it on first use.\n\n" +
                         "\u2022 Only save media you have the right to download. Many sites' terms forbid it \u2014 you are responsible for how you use this.\n" +
-                        "\u2022 DRM-protected content is not supported and is never bypassed.\n" +
-                        "\u2022 Experimental feature; it also makes the app noticeably larger.",
+                        "\u2022 Detects supported page media, direct video files, HLS, and DASH sources.\n" +
+                        "\u2022 The bundled engine makes the app noticeably larger.",
                 )
             },
             confirmButton = {
@@ -430,6 +508,132 @@ fun SettingsScreen(
                 }) { Text("Enable") }
             },
             dismissButton = { TextButton(onClick = { ytDlpDialog = false }) { Text("Cancel") } },
+        )
+    }
+
+    if (exportCookiesDialog) {
+        AlertDialog(
+            onDismissRequest = { exportCookiesDialog = false },
+            title = { Text("Export this site's cookies?") },
+            text = {
+                Text(
+                    "Cookie files can contain signed-in session tokens. Anyone with the exported " +
+                        "file may be able to use that site's session. Keep it private.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    exportCookiesDialog = false
+                    actions.exportCurrentSiteCookies()
+                }) { Text("Export") }
+            },
+            dismissButton = {
+                TextButton(onClick = { exportCookiesDialog = false }) { Text("Cancel") }
+            },
+        )
+    }
+
+    if (importCookiesDialog) {
+        AlertDialog(
+            onDismissRequest = { importCookiesDialog = false },
+            title = { Text("Import cookies into this site?") },
+            text = {
+                Text(
+                    "SPACE scopes imported cookies to the currently open website and ignores " +
+                        "domains from the file. Import only files you trust.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    importCookiesDialog = false
+                    actions.importCurrentSiteCookies()
+                }) { Text("Choose file") }
+            },
+            dismissButton = {
+                TextButton(onClick = { importCookiesDialog = false }) { Text("Cancel") }
+            },
+        )
+    }
+
+    if (importExtensionDialog) {
+        AlertDialog(
+            onDismissRequest = { importExtensionDialog = false },
+            title = { Text("Install a local extension?") },
+            text = {
+                Text(
+                    "A userscript can read and change every matching webpage. Install scripts " +
+                        "only from authors you trust. SPACE stores them locally and shows an " +
+                        "on/off switch for each script.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    importExtensionDialog = false
+                    actions.importUserScript()
+                }) { Text("Choose script") }
+            },
+            dismissButton = {
+                TextButton(onClick = { importExtensionDialog = false }) { Text("Cancel") }
+            },
+        )
+    }
+
+    removeExtensionId?.let { id ->
+        val script = userScripts.firstOrNull { it.id == id }
+        AlertDialog(
+            onDismissRequest = { removeExtensionId = null },
+            title = { Text("Remove ${script?.name ?: "extension"}?") },
+            text = { Text("The local script will stop running and be deleted from SPACE.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    container.userScriptManager.remove(id)
+                    container.tabManager.activeTab?.webView?.reload()
+                    removeExtensionId = null
+                }) { Text("Remove", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { removeExtensionId = null }) { Text("Cancel") }
+            },
+        )
+    }
+
+    if (developerToolsDialog) {
+        AlertDialog(
+            onDismissRequest = { developerToolsDialog = false },
+            title = { Text("Enable remote DevTools?") },
+            text = {
+                Text(
+                    "When USB debugging is authorized, desktop debugging tools can inspect and " +
+                        "modify open WebView pages. Turn this off after development.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    scope.launch { repo.setDeveloperToolsEnabled(true) }
+                    developerToolsDialog = false
+                }) { Text("Enable") }
+            },
+            dismissButton = {
+                TextButton(onClick = { developerToolsDialog = false }) { Text("Cancel") }
+            },
+        )
+    }
+
+    if (developerToolsInfoDialog) {
+        AlertDialog(
+            onDismissRequest = { developerToolsInfoDialog = false },
+            title = { Text("Connect DevTools") },
+            text = {
+                Text(
+                    "1. Enable Android Developer options and USB debugging.\n" +
+                        "2. Connect the device to your computer and authorize it.\n" +
+                        "3. Open chrome://inspect in desktop Chrome.\n" +
+                        "4. Find com.spacebrowser and choose Inspect.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { developerToolsInfoDialog = false }) { Text("Done") }
+            },
         )
     }
 

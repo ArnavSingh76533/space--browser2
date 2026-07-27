@@ -189,6 +189,7 @@ fun BrowserScreen(
             focusRequester = addressFocus,
             isEditing = editing,
             isSecure = tab?.isSecure != false,
+            hasCertificateError = tab?.certificateError != null,
             isPrivateTab = tab?.isPrivate == true,
             isLoading = tab != null && !tab.showHome && tab.isLoading,
             progress = tab?.progress ?: 0,
@@ -434,11 +435,20 @@ fun BrowserScreen(
                         }
                     }
                     is AiAction.MediaControl -> {
-                        tabManager.runMediaCommand(act.command)
+                        tabManager.runMediaCommand(act.command) { worked ->
+                            if (worked) container.browserEvents.toast(act.command.label)
+                        }
                     }
                     is AiAction.WebActions -> {
                         tabManager.runWebSequence(act.steps) { result ->
-                            result.exceptionOrNull()?.message?.let(container.browserEvents::toast)
+                            result.fold(
+                                onSuccess = { container.browserEvents.toast(it) },
+                                onFailure = {
+                                    container.browserEvents.toast(
+                                        it.message ?: "Page action failed",
+                                    )
+                                },
+                            )
                         }
                     }
                     AiAction.NewTab -> tabManager.newTab()

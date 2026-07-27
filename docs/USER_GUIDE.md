@@ -13,7 +13,8 @@ From left to right:
 
 - **Shield** — shows how many trackers were blocked on this page. Tap it for
   the site panel: connection security, the block count, a per-site shields
-  toggle, and Copy URL.
+  toggle, and Copy URL. Shield starts enabled and also stops known ad
+  click-throughs and popups.
 - **Address pill** — the lock/warning icon reflects HTTPS state. Tap to edit;
   suggestions blend your history with your engine's live suggestions (which
   you can disable). Private tabs never query the network for suggestions.
@@ -54,8 +55,9 @@ Quick row: forward · reload · bookmark · share · home. Below it:
 - **Print / Save as PDF** — via Android's print dialog.
 - **Capture page screenshot** — grabs the visible page and opens the share
   sheet.
-- **Download media** — when the optional yt-dlp feature is enabled, inspect
-  the open page and save a selected video/audio format to `Downloads/SPACE`.
+- **Download media** — inspect the open page with yt-dlp or choose a detected
+  HLS, DASH, MP4, WebM, MKV, M4V, or MOV source, then save a selected
+  video/audio format to `Downloads/SPACE`.
 - **AI assistant** — see below.
 - **Password generator** — length 8–40, digits/symbols toggles,
   cryptographically random, one-tap copy.
@@ -87,6 +89,12 @@ sequences. The model never supplies raw executable JavaScript: actions use
 fixed browser scripts, are limited to eight steps, and reject passwords,
 payment details, OTPs, and similar sensitive fields.
 
+For example, **“Open Wikipedia, search for Android WebView, and find the
+History section”** opens the result and moves to the matching content.
+**“Take me to the privacy policy”** follows a matching link or highlights and
+scrolls to matching page content. Ordinary search forms can be filled and
+submitted as a short sequence.
+
 For **Summarize · Key points · Explain simply · Translate** (8 languages) and
 free-form questions, page text goes only to your configured server when you
 trigger the request.
@@ -110,10 +118,15 @@ Use the search field at the top — every setting is filterable.
   OpenAI-compatible endpoint, model, and encrypted API key.
 - **Media** — background playback keeps already-playing media alive when SPACE
   leaves the foreground and exposes Android notification/headset controls.
-- **Downloads** — optional yt-dlp media downloader, Wi-Fi-only downloads, and
-  download confirmation.
-- **Data** — clear history/cookies/cache on exit; history retention
-  (forever / 7 / 30 / 90 days).
+- **Downloads** — default-on yt-dlp and direct-media downloader, Wi-Fi-only
+  downloads, and download confirmation.
+- **Data** — import/export cookies for the current site, clear
+  history/cookies/cache on exit, and history retention (forever / 7 / 30 / 90
+  days). Cookie exports can contain active sign-in tokens, so protect them.
+- **Extensions & developer tools** — import Greasemonkey/Tampermonkey
+  `.user.js` files, export a SPACE user-script bundle, enable/disable/remove
+  scripts, and opt into remote WebView inspection. Imported scripts can read
+  and modify matching pages.
 - **Security** — biometric/screen-lock **app lock**; SPACE re-locks whenever
   it leaves the foreground.
 
@@ -122,8 +135,16 @@ Use the search field at the top — every setting is filterable.
 - Back walks: find bar → page history → start page → previous tab.
 - `http://` links try HTTPS first and fall back once, remembering the
   exception for the session.
+- A bad HTTPS certificate is never silently trusted. SPACE shows a warning;
+  choosing **Continue once (unsafe)** loads that connection only for the
+  current attempt and leaves a red warning marker. No permanent exception is
+  saved.
 - Downloads land in your Downloads folder with a system notification, and the
   Library's Downloads tab tracks progress live.
 - HTML videos can enter immersive fullscreen; Back exits fullscreen before it
   navigates the page.
+- Android System WebView cannot load Chrome Web Store CRX/Manifest V3
+  extensions. SPACE's local user scripts are the compatible extension option;
+  full Chrome-extension support would require replacing WebView with a custom
+  Chromium engine.
 - SPACE registers as a browser, so "Open with" and web links can use it.

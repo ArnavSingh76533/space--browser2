@@ -56,4 +56,41 @@ class AiActionParserTest {
             as AiAction.MediaControl
         assertEquals(140.0, (seek.command as MediaCommand.SeekTo).seconds, 0.0)
     }
+
+    @Test
+    fun `model json can be recovered from a prose wrapper`() {
+        assertEquals(
+            AiAction.OpenUrl("https://example.com/privacy"),
+            parseAiAction(
+                """I can do that. {"action":"OPEN_URL","url":"https://example.com/privacy"}""",
+            ),
+        )
+    }
+
+    @Test
+    fun `wikipedia section request becomes an executable sequence`() {
+        val action = parseLocalBrowserCommand(
+            "Open Wikipedia, search for Android WebView, and find the History section",
+        ) as AiAction.WebActions
+        assertTrue(action.steps[0] is WebStep.OpenUrl)
+        assertTrue((action.steps[0] as WebStep.OpenUrl).url.contains("Android+WebView"))
+        assertEquals(WebStep.FindText("History"), action.steps[1])
+    }
+
+    @Test
+    fun `form request becomes fill and click actions`() {
+        val action = parseLocalBrowserCommand(
+            "Enter Space Browser in the search field and click Search",
+        ) as AiAction.WebActions
+        assertEquals(WebStep.FillField("search field", "Space Browser"), action.steps[0])
+        assertEquals(WebStep.ClickText("Search"), action.steps[1])
+    }
+
+    @Test
+    fun `find request navigates to page content`() {
+        val action = parseLocalBrowserCommand(
+            "Take me to the privacy policy on this page",
+        ) as AiAction.WebActions
+        assertEquals(WebStep.FindText("privacy policy"), action.steps.single())
+    }
 }

@@ -26,13 +26,30 @@
   rules.
 - Added focused tests for SPACE AI action parsing and the new ad-block engine,
   and restored the missing Gradle wrapper so clones build directly.
+- Certificate failures now use a one-time, explicit unsafe-continuation
+  dialog rather than silent trust. Continued pages retain a red security
+  marker and no certificate exception is persisted.
+- Shield is enabled on fresh installs and now blocks script-created popups,
+  ad-network target-blank windows, and blocked main-document redirects in
+  addition to subresources and cosmetic elements.
+- Fullscreen video now synchronizes immersive UI and sensor-landscape
+  orientation while preserving and restoring the previous orientation.
+- SPACE AI now deterministically handles Wikipedia section requests,
+  privacy-policy/content navigation, controlled form fill-and-click tasks,
+  and model replies that wrap a valid action in prose.
+- Media download inspection now surfaces detected HLS, DASH, MP4, WebM, MKV,
+  M4V, and MOV sources. yt-dlp is enabled by default but remains switchable.
+- Added current-site cookie import/export, local user-script extension
+  import/export and management, and opt-in WebView remote developer tools.
+  Chrome CRX/Manifest V3 packages remain unsupported by Android WebView.
 
 ## 0.2.0 — course correction
 
 - Start page now shows your 5 most-visited sites with their real favicons
   (long-press to hide one); seeded shortcuts removed via DB migration.
-- Google is the default search engine and shields default to off on fresh
-  installs — existing users keep their choices.
+- Google is the default search engine. Shield originally defaulted off in this
+  release; 0.3 changes the fresh-install default to on while existing users
+  keep their saved choice.
 - Shield is tappable before navigation: outline = off, filled = on, with a
   global toggle dialog on the home screen and the site panel on pages.
 - Desktop mode can be chosen before a page loads, plus a

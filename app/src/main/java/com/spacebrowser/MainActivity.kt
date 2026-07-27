@@ -9,6 +9,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -16,6 +17,8 @@ import android.net.Uri
 import android.os.Bundle
 import android.print.PrintAttributes
 import android.print.PrintManager
+import android.provider.OpenableColumns
+import android.webkit.CookieManager
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
 import android.view.ViewGroup
@@ -68,6 +71,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.spacebrowser.core.AppContainer
+import com.spacebrowser.core.browser.CookieTransfer
 import com.spacebrowser.core.browser.Downloader
 import com.spacebrowser.core.browser.Tab
 import com.spacebrowser.ui.ActivityActions
@@ -87,6 +91,13 @@ class MainActivity : AppCompatActivity(), ActivityActions {
 
     private lateinit var container: AppContainer
     private lateinit var fileChooserLauncher: ActivityResultLauncher<Intent>
+    private lateinit var cookieExportLauncher: ActivityResultLauncher<String>
+    private lateinit var cookieImportLauncher: ActivityResultLauncher<Array<String>>
+    private lateinit var scriptExportLauncher: ActivityResultLauncher<String>
+    private lateinit var scriptImportLauncher: ActivityResultLauncher<Array<String>>
+    private var pendingCookieExport: String? = null
+    private var pendingCookieImport: Pair<String, String>? = null
+    private var pendingScriptExport: String? = null
     private var prompting = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -101,6 +112,31 @@ class MainActivity : AppCompatActivity(), ActivityActions {
         ) { result ->
             val uris = WebChromeClient.FileChooserParams.parseResult(result.resultCode, result.data)
             container.browserEvents.resolveFileChooser(uris)
+        }
+
+        cookieExportLauncher = registerForActivityResult(
+            ActivityResultContracts.CreateDocument("application/json"),
+        ) { uri ->
+            writeDocument(uri, pendingCookieExport, "Cookies exported")
+            pendingCookieExport = null
+        }
+        cookieImportLauncher = registerForActivityResult(
+            ActivityResultContracts.OpenDocument(),
+        ) { uri ->
+            val target = pendingCookieImport
+            pendingCookieImport = null
+            if (uri != null && target != null) importCookies(uri, target.first, target.second)
+        }
+        scriptExportLauncher = registerForActivityResult(
+            ActivityResultContracts.CreateDocument("application/json"),
+        ) { uri ->
+            writeDocument(uri, pendingScriptExport, "Extensions exported")
+            pendingScriptExport = null
+        }
+        scriptImportLauncher = registerForActivityResult(
+            ActivityResultContracts.OpenDocument(),
+        ) { uri ->
+            if (uri != null) importUserScript(uri)
         }
 
         lifecycleScope.launch {
@@ -162,6 +198,7 @@ class MainActivity : AppCompatActivity(), ActivityActions {
 
     override fun onDestroy() {
         if (container.tabManager.hostContext === this) {
+            container.browserEvents.resolveSslDecision(false)
             container.browserEvents.hideFullscreen()
             container.tabManager.hostContext = null
         }
@@ -235,6 +272,105 @@ class MainActivity : AppCompatActivity(), ActivityActions {
             startActivity(Intent(DownloadManager.ACTION_VIEW_DOWNLOADS))
         } catch (_: ActivityNotFoundException) {
             container.browserEvents.toast("No downloads app found")
+        }
+    }
+
+    override fun exportCurrentSiteCookies() {
+        val tab = container.tabManager.activeTab
+        val url = tab?.url
+        if (tab == null || url.isNullOrBlank()) {
+            container.browserEvents.toast("Open a website first")
+            return
+        }
+        val uri = Uri.parse(url)
+        val scheme = uri?.scheme?.lowercase()
+        val host = uri?.host
+        if (host.isNullOrBlank() || (scheme != "http" && scheme != "https")) {
+            container.browserEvents.toast("Open a website first")
+            return
+        }
+        val header = CookieManager.getInstance().getCookie(url).orEmpty()
+        if (header.isBlank()) {
+            container.browserEvents.toast("This site has no cookies to export")
+            return
+        }
+        val origin = "$scheme://$host" + if (uri.port > 0) ":${uri.port}" else ""
+        pendingCookieExport = CookieTransfer.export(origin, header)
+        cookieExportLauncher.launch("space-cookies-$host.json")
+    }
+
+    override fun importCurrentSiteCookies() {
+        val tab = container.tabManager.activeTab
+        val url = tab?.url
+        val scheme = url?.let(Uri::parse)?.scheme?.lowercase()
+        if (tab == null || url.isNullOrBlank() || (scheme != "http" && scheme != "https")) {
+            container.browserEvents.toast("Open the destination website first")
+            return
+        }
+        pendingCookieImport = tab.id to url
+        cookieImportLauncher.launch(arrayOf("application/json", "text/plain", "text/*"))
+    }
+
+    override fun importUserScript() {
+        scriptImportLauncher.launch(
+            arrayOf("application/javascript", "text/javascript", "text/plain", "application/json"),
+        )
+    }
+
+    override fun exportUserScripts() {
+        pendingScriptExport = container.userScriptManager.exportBundle()
+        scriptExportLauncher.launch("space-local-extensions.json")
+    }
+
+    private fun writeDocument(uri: Uri?, content: String?, successMessage: String) {
+        if (uri == null || content == null) return
+        try {
+            contentResolver.openOutputStream(uri, "wt")?.bufferedWriter()?.use { it.write(content) }
+                ?: error("Couldn't open the selected file")
+            container.browserEvents.toast(successMessage)
+        } catch (_: Exception) {
+            container.browserEvents.toast("Couldn't write that file")
+        }
+    }
+
+    private fun readDocument(uri: Uri): String {
+        val text = contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+            ?: error("Couldn't open the selected file")
+        require(text.toByteArray().size <= 2_000_000) { "The selected file is too large" }
+        return text
+    }
+
+    private fun importCookies(uri: Uri, tabId: String, url: String) {
+        try {
+            val cookies = CookieTransfer.import(readDocument(uri))
+            require(cookies.isNotEmpty()) { "No cookies were found" }
+            val https = url.startsWith("https://", ignoreCase = true)
+            val manager = CookieManager.getInstance()
+            cookies.forEach { manager.setCookie(url, it.setCookieHeader(https), null) }
+            manager.flush()
+            container.tabManager.tabs.firstOrNull { it.id == tabId }?.webView?.reload()
+            container.browserEvents.toast("${cookies.size} cookies imported into this site")
+        } catch (error: Exception) {
+            container.browserEvents.toast(error.message?.take(120) ?: "Couldn't import cookies")
+        }
+    }
+
+    private fun importUserScript(uri: Uri) {
+        try {
+            val name = contentResolver.query(
+                uri,
+                arrayOf(OpenableColumns.DISPLAY_NAME),
+                null,
+                null,
+                null,
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) cursor.getString(0) else null
+            } ?: "Local extension"
+            val count = container.userScriptManager.importText(readDocument(uri), name).getOrThrow()
+            container.tabManager.activeTab?.webView?.reload()
+            container.browserEvents.toast("$count local extension${if (count == 1) "" else "s"} imported")
+        } catch (error: Exception) {
+            container.browserEvents.toast(error.message?.take(120) ?: "Couldn't import extension")
         }
     }
 
@@ -335,6 +471,7 @@ private fun SpaceRoot(container: AppContainer, actions: ActivityActions) {
                 SitePermissionHandler(container)
                 GeoPermissionHandler(container)
                 DownloadConfirmHandler(container)
+                SslWarningHandler(container)
                 FullscreenVideoHost(container)
 
                 if (container.appLockState.locked) {
@@ -343,6 +480,41 @@ private fun SpaceRoot(container: AppContainer, actions: ActivityActions) {
             }
         }
     }
+}
+
+/** Keeps certificate failures visible and requires an explicit one-time override. */
+@Composable
+private fun SslWarningHandler(container: AppContainer) {
+    val request by container.browserEvents.sslWarningRequest.collectAsState()
+    val warning = request ?: return
+    val host = runCatching { Uri.parse(warning.url).host }.getOrNull() ?: "this site"
+    AlertDialog(
+        onDismissRequest = { container.browserEvents.resolveSslDecision(false) },
+        title = {
+            Text(
+                "Certificate warning",
+                color = MaterialTheme.colorScheme.error,
+            )
+        },
+        text = {
+            Text(
+                "$host cannot prove that this connection is private.\n\n" +
+                    "${warning.reason}\n\n" +
+                    "Continuing can expose passwords, messages, and browsing data. " +
+                    "SPACE will mark this tab red and will not remember the exception.",
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = { container.browserEvents.resolveSslDecision(false) }) {
+                Text("Go back")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = { container.browserEvents.resolveSslDecision(true) }) {
+                Text("Continue once", color = MaterialTheme.colorScheme.error)
+            }
+        },
+    )
 }
 
 /** Displays the custom HTML media view supplied by WebChromeClient. */
@@ -356,12 +528,15 @@ private fun FullscreenVideoHost(container: AppContainer) {
 
     DisposableEffect(activity, current) {
         val window = activity.window
+        val previousOrientation = activity.requestedOrientation
         val controller = WindowCompat.getInsetsController(window, window.decorView)
+        activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         controller.hide(WindowInsetsCompat.Type.systemBars())
         controller.systemBarsBehavior =
             WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         onDispose {
+            activity.requestedOrientation = previousOrientation
             controller.show(WindowInsetsCompat.Type.systemBars())
             window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             (current.view.parent as? ViewGroup)?.removeView(current.view)

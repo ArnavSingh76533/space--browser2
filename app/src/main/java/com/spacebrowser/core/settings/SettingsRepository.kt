@@ -35,13 +35,13 @@ data class SpaceSettings(
     val customSearchUrl: String = "",
     val searchSuggestions: Boolean = true,
     // Privacy
-    val adBlockEnabled: Boolean = false,  // shields are opt-in by default
+    val adBlockEnabled: Boolean = true,
     val adBlockCustomRules: Set<String> = emptySet(),
     val adBlockAllowlist: Set<String> = emptySet(),
     val httpsUpgrade: Boolean = true,
     val blockThirdPartyCookies: Boolean = true,
     val safeBrowsing: Boolean = true,
-    val uaPrivacyMode: Boolean = true,        // generic user agent
+    val uaPrivacyMode: Boolean = false,       // default engine UA maximizes site compatibility
     val askCameraMic: Boolean = false,        // false = auto-deny site hardware access
     val askLocation: Boolean = false,
     val clearHistoryOnExit: Boolean = false,
@@ -50,6 +50,7 @@ data class SpaceSettings(
     val historyRetentionDays: Int = 90,       // 0 = forever
     // Security
     val appLock: Boolean = false,
+    val developerToolsEnabled: Boolean = false,
     // AI (bring your own OpenAI-compatible endpoint; key lives in SecureStore)
     val aiEndpoint: String = "https://api.openai.com/v1",
     val aiModel: String = "gpt-4o-2024-08-06",
@@ -60,7 +61,7 @@ data class SpaceSettings(
     // Downloads
     val downloadWifiOnly: Boolean = false,
     val confirmDownloads: Boolean = false,
-    val ytDlpEnabled: Boolean = false,        // optional media downloader, off by default
+    val ytDlpEnabled: Boolean = true,
     // Start page
     val hiddenTopSites: Set<String> = emptySet(),
     // Stats
@@ -97,6 +98,7 @@ class SettingsRepository(private val context: Context) {
         val CLEAR_CACHE = booleanPreferencesKey("clear_cache_exit")
         val RETENTION = intPreferencesKey("history_retention_days")
         val APP_LOCK = booleanPreferencesKey("app_lock")
+        val DEVELOPER_TOOLS = booleanPreferencesKey("developer_tools")
         val AI_ENDPOINT = stringPreferencesKey("ai_endpoint")
         val AI_MODEL = stringPreferencesKey("ai_model")
         val AI_ACTION_MODE = intPreferencesKey("ai_action_mode")
@@ -130,13 +132,13 @@ class SettingsRepository(private val context: Context) {
         searchEngineId = this[K.ENGINE] ?: "google",
         customSearchUrl = this[K.CUSTOM_SEARCH] ?: "",
         searchSuggestions = this[K.SUGGESTIONS] ?: true,
-        adBlockEnabled = this[K.ADBLOCK] ?: false,
+        adBlockEnabled = this[K.ADBLOCK] ?: true,
         adBlockCustomRules = this[K.ADBLOCK_RULES] ?: emptySet(),
         adBlockAllowlist = this[K.ADBLOCK_ALLOW] ?: emptySet(),
         httpsUpgrade = this[K.HTTPS] ?: true,
         blockThirdPartyCookies = this[K.COOKIES_3P] ?: true,
         safeBrowsing = this[K.SAFE_BROWSING] ?: true,
-        uaPrivacyMode = this[K.UA_PRIVACY] ?: true,
+        uaPrivacyMode = this[K.UA_PRIVACY] ?: false,
         askCameraMic = this[K.ASK_CAM] ?: false,
         askLocation = this[K.ASK_LOC] ?: false,
         clearHistoryOnExit = this[K.CLEAR_HISTORY] ?: false,
@@ -144,6 +146,7 @@ class SettingsRepository(private val context: Context) {
         clearCacheOnExit = this[K.CLEAR_CACHE] ?: true,
         historyRetentionDays = this[K.RETENTION] ?: 90,
         appLock = this[K.APP_LOCK] ?: false,
+        developerToolsEnabled = this[K.DEVELOPER_TOOLS] ?: false,
         aiEndpoint = this[K.AI_ENDPOINT] ?: "https://api.openai.com/v1",
         aiModel = this[K.AI_MODEL] ?: "gpt-4o-2024-08-06",
         aiActionMode = AiActionMode.entries.getOrElse(this[K.AI_ACTION_MODE] ?: 0) {
@@ -153,7 +156,7 @@ class SettingsRepository(private val context: Context) {
         backgroundPlaybackEnabled = this[K.BACKGROUND_PLAYBACK] ?: true,
         downloadWifiOnly = this[K.DL_WIFI_ONLY] ?: false,
         confirmDownloads = this[K.DL_CONFIRM] ?: false,
-        ytDlpEnabled = this[K.YTDLP] ?: false,
+        ytDlpEnabled = this[K.YTDLP] ?: true,
         hiddenTopSites = this[K.HIDDEN_TOP_SITES] ?: emptySet(),
         trackersBlockedTotal = this[K.BLOCKED_TOTAL] ?: 0L,
     )
@@ -192,6 +195,7 @@ class SettingsRepository(private val context: Context) {
     suspend fun setClearCacheOnExit(v: Boolean) = edit { it[K.CLEAR_CACHE] = v }
     suspend fun setHistoryRetentionDays(v: Int) = edit { it[K.RETENTION] = v }
     suspend fun setAppLock(v: Boolean) = edit { it[K.APP_LOCK] = v }
+    suspend fun setDeveloperToolsEnabled(v: Boolean) = edit { it[K.DEVELOPER_TOOLS] = v }
     suspend fun setAiEndpoint(v: String) = edit { it[K.AI_ENDPOINT] = v.trim() }
     suspend fun setAiModel(v: String) = edit { it[K.AI_MODEL] = v.trim() }
     suspend fun setAiActionMode(v: AiActionMode) = edit { it[K.AI_ACTION_MODE] = v.ordinal }

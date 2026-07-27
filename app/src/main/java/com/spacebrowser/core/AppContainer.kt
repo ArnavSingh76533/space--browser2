@@ -9,6 +9,7 @@ import com.spacebrowser.core.browser.BrowserEvents
 import com.spacebrowser.core.browser.TabManager
 import com.spacebrowser.core.db.AppDatabase
 import com.spacebrowser.core.db.BrowsingRepository
+import com.spacebrowser.core.extensions.UserScriptManager
 import com.spacebrowser.core.net.AiClient
 import com.spacebrowser.core.net.SuggestionClient
 import com.spacebrowser.core.security.SecureStore
@@ -35,6 +36,7 @@ class AppContainer(context: Context) {
     val browsingRepository = BrowsingRepository(database)
     val adBlocker = AdBlocker(appContext)
     val browserEvents = BrowserEvents()
+    val userScriptManager = UserScriptManager(appContext)
     val suggestionClient = SuggestionClient(SuggestionClient.defaultHttp())
     val aiClient = AiClient()
     val appLockState = AppLockState()
@@ -51,6 +53,7 @@ class AppContainer(context: Context) {
             settingsRepo = settingsRepository,
             browsingRepo = browsingRepository,
             adBlocker = adBlocker,
+            userScriptManager = userScriptManager,
             events = browserEvents,
             initialSettings = initial,
         )

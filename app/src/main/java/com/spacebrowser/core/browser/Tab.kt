@@ -28,6 +28,10 @@ class Tab(
     var canGoForward by mutableStateOf(false)
     var blockedOnPage by mutableIntStateOf(0)
     var isSecure by mutableStateOf(true)
+    /** Non-null only after the user explicitly continues a recoverable TLS error. */
+    var certificateError by mutableStateOf<String?>(null)
+    /** URL whose failed certificate is represented by [certificateError]. */
+    var certificateErrorUrl: String? = null
     var isDesktop by mutableStateOf(false)
     var errorMessage by mutableStateOf<String?>(null)
 

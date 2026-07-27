@@ -35,7 +35,9 @@ sealed class WebStep(val label: String) {
 object WebAutomation {
 
     private const val MEDIA_ELEMENT =
-        "document.querySelector('video:not([aria-hidden=\"true\"]),audio:not([aria-hidden=\"true\"])')"
+        "([...document.querySelectorAll('video:not([aria-hidden=\"true\"])," +
+            "audio:not([aria-hidden=\"true\"])')].sort((a,b)=>" +
+            "(b.clientWidth*b.clientHeight)-(a.clientWidth*a.clientHeight))[0]||null)"
 
     suspend fun media(webView: WebView, command: MediaCommand): Result<String> {
         val operation = when (command) {
@@ -96,7 +98,7 @@ object WebAutomation {
         """.trimIndent(),
     )
 
-    suspend fun playFirstYouTubeResult(webView: WebView): Result<String> = evaluate(
+    suspend fun firstYouTubeResult(webView: WebView): Result<String> = evaluate(
         webView,
         """
         (function(){
@@ -107,10 +109,14 @@ object WebAutomation {
             'a[href^="/watch?v="]'
           ];
           for(const selector of selectors){
-            const item=document.querySelector(selector);
-            if(item){
-              item.click();
-              return JSON.stringify({ok:true,message:"Opening the first video"});
+            const items=[...document.querySelectorAll(selector)];
+            for(const item of items){
+              if(item.closest('ytd-ad-slot,ytd-promoted-video-renderer,[data-is-ad="true"]')) continue;
+              const parent=item.closest('a');
+              const href=item.href||(parent&&parent.href);
+              if(href && /^https:\/\/(www\.|m\.)?youtube\.com\/watch\?/.test(href)){
+                return JSON.stringify({ok:true,message:"Found the first video",url:href});
+              }
             }
           }
           return JSON.stringify({ok:false,message:"No video result was found"});
@@ -176,8 +182,12 @@ object WebAutomation {
               if(!wanted||sensitive.test(wanted))
                 return JSON.stringify({ok:false,message:"Sensitive fields are not filled by AI"});
               const fields=[...document.querySelectorAll('input,textarea,[contenteditable="true"]')];
+              const normalizedWanted=wanted
+                .replace(/\b(the|field|box|input|textbox)\b/g,' ')
+                .replace(/\s+/g,' ').trim();
               const labelFor=e=>{
-                const explicit=e.id&&document.querySelector('label[for="'+CSS.escape(e.id)+'"]');
+                const explicit=e.id&&[...document.querySelectorAll('label[for]')]
+                  .find(label=>label.htmlFor===e.id);
                 const wrapping=e.closest('label');
                 return [
                   explicit&&explicit.innerText,
@@ -192,13 +202,45 @@ object WebAutomation {
                 return !['password','hidden','file','checkbox','radio','submit','button'].includes(type)
                   && !sensitive.test(labelFor(e));
               };
-              const target=fields.find(e=>allowed(e)&&labelFor(e).includes(wanted));
+              const visible=e=>!!(e.offsetWidth||e.offsetHeight||e.getClientRects().length);
+              const score=e=>{
+                if(!allowed(e)||!visible(e)) return -1;
+                const label=labelFor(e);
+                const type=(e.getAttribute('type')||'text').toLowerCase();
+                let result=0;
+                if(label===wanted||label===normalizedWanted) result+=100;
+                if(label.includes(wanted)||label.includes(normalizedWanted)) result+=50;
+                if((normalizedWanted==='search'||wanted.includes('search'))&&type==='search') result+=40;
+                if((normalizedWanted==='search'||wanted.includes('search'))&&
+                   /search|query|keyword/.test(label)) result+=30;
+                return result;
+              };
+              const target=fields
+                .map(e=>({e,score:score(e)}))
+                .sort((a,b)=>b.score-a.score)
+                .find(item=>item.score>0)?.e ||
+                (fields.filter(e=>allowed(e)&&visible(e)).length===1
+                  ? fields.find(e=>allowed(e)&&visible(e)) : null);
               if(!target) return JSON.stringify({ok:false,message:"No safe matching field"});
               target.focus();
-              if(target.isContentEditable) target.textContent=value; else target.value=value;
-              target.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:value}));
+              if(target.isContentEditable) {
+                target.textContent=value;
+              } else {
+                const proto=target instanceof HTMLTextAreaElement
+                  ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+                const descriptor=Object.getOwnPropertyDescriptor(proto,'value');
+                const setter=descriptor&&descriptor.set;
+                if(setter) setter.call(target,value); else target.value=value;
+              }
+              try {
+                target.dispatchEvent(new InputEvent(
+                  'input',{bubbles:true,inputType:'insertText',data:value}
+                ));
+              } catch(_) {
+                target.dispatchEvent(new Event('input',{bubbles:true}));
+              }
               target.dispatchEvent(new Event('change',{bubbles:true}));
-              return JSON.stringify({ok:true,message:"Field filled"});
+              return JSON.stringify({ok:true,message:"Field filled",field:labelFor(target)});
             })()
             """.trimIndent(),
         )
@@ -210,10 +252,42 @@ object WebAutomation {
             webView,
             """
             (function(){
-              const text=$quoted;
+              const text=$quoted.trim();
               if(!text) return JSON.stringify({ok:false,message:"Missing text"});
+              const wanted=text.toLowerCase().replace(/\s+/g,' ');
+              const visible=e=>!!(e.offsetWidth||e.offsetHeight||e.getClientRects().length);
+              const label=e=>(
+                e.innerText||e.textContent||e.getAttribute('aria-label')||
+                e.getAttribute('title')||''
+              ).replace(/\s+/g,' ').trim().toLowerCase();
+              const nodes=[...document.querySelectorAll(
+                'a,button,[role="link"],[role="button"],h1,h2,h3,h4,section,[id],main p'
+              )].filter(visible);
+              const clickable=e=>e.matches('a,button,[role="link"],[role="button"]') ||
+                !!e.closest('a[href]');
+              const exact=nodes.filter(e=>label(e)===wanted);
+              const partial=nodes.filter(e=>label(e).includes(wanted))
+                .sort((a,b)=>label(a).length-label(b).length);
+              const match=exact.find(clickable) || exact[0] ||
+                partial.find(clickable) || partial[0];
+              if(match){
+                match.scrollIntoView({block:'center',inline:'nearest',behavior:'smooth'});
+                const link=match.closest('a[href]') || (match.matches('a[href]')?match:null);
+                if(link){
+                  link.click();
+                  return JSON.stringify({ok:true,message:"Opened the matching link"});
+                }
+                match.style.outline='3px solid #ff3b5c';
+                match.style.outlineOffset='4px';
+                if(!match.hasAttribute('tabindex')) match.setAttribute('tabindex','-1');
+                match.focus({preventScroll:true});
+                return JSON.stringify({ok:true,message:"Scrolled to and highlighted the match"});
+              }
               const found=window.find(text,false,false,true,false,false,false);
-              return JSON.stringify({ok:found,message:found?"Text found":"Text not found"});
+              return JSON.stringify({
+                ok:found,
+                message:found?"Scrolled to the matching text":"Text not found"
+              });
             })()
             """.trimIndent(),
         )

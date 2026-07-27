@@ -2,11 +2,14 @@ package com.spacebrowser.core.browser
 
 import android.graphics.Bitmap
 import android.net.Uri
+import android.os.Message
 import android.webkit.GeolocationPermissions
 import android.webkit.PermissionRequest
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
 import android.webkit.WebView
+import android.webkit.WebViewClient
 import android.view.View
 
 class SpaceWebChromeClient(
@@ -37,6 +40,62 @@ class SpaceWebChromeClient(
 
     override fun onHideCustomView() {
         deps.events.hideFullscreen(notifyWebView = false)
+    }
+
+    override fun onCreateWindow(
+        view: WebView,
+        isDialog: Boolean,
+        isUserGesture: Boolean,
+        resultMsg: Message,
+    ): Boolean {
+        // Background/script-created windows are popups by definition. A real
+        // user-initiated target=_blank is captured and opened as a normal tab
+        // only after Shield gets the destination URL.
+        if (!isUserGesture) {
+            if (deps.settings().adBlockEnabled) {
+                tab.blockedOnPage++
+                deps.events.toast("Shield blocked a popup")
+            }
+            return false
+        }
+        val transport = resultMsg.obj as? WebView.WebViewTransport ?: return false
+        val popup = WebView(view.context)
+        var handled = false
+        fun open(url: String?) {
+            if (handled || url.isNullOrBlank() || url == "about:blank") return
+            handled = true
+            deps.openPopup(tab, url)
+            popup.stopLoading()
+            popup.destroy()
+        }
+        popup.webViewClient = object : WebViewClient() {
+            override fun shouldOverrideUrlLoading(
+                child: WebView,
+                request: WebResourceRequest,
+            ): Boolean {
+                open(request.url.toString())
+                return true
+            }
+
+            override fun onPageStarted(child: WebView, url: String, favicon: Bitmap?) {
+                open(url)
+            }
+        }
+        // A malformed popup can remain at about:blank forever. Do not retain an
+        // invisible WebView if it never supplies a destination.
+        popup.postDelayed(
+            {
+                if (!handled) {
+                    handled = true
+                    popup.stopLoading()
+                    popup.destroy()
+                }
+            },
+            POPUP_CAPTURE_TIMEOUT_MS,
+        )
+        transport.webView = popup
+        resultMsg.sendToTarget()
+        return true
     }
 
     override fun onShowFileChooser(
@@ -85,5 +144,9 @@ class SpaceWebChromeClient(
 
     override fun onGeolocationPermissionsHidePrompt() {
         deps.events.geoRequest.value = null
+    }
+
+    private companion object {
+        const val POPUP_CAPTURE_TIMEOUT_MS = 5_000L
     }
 }

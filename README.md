@@ -2,7 +2,7 @@
 
 SPACE is a modern Kotlin/Jetpack Compose browser built on Android System
 WebView. It combines tabbed and private browsing, a request-level privacy
-shield, optional local media downloading, background playback, and an
+shield, local media downloading, background playback, and an
 allowlisted AI browser assistant without adding telemetry or accounts.
 
 ## What changed in 0.3
@@ -19,7 +19,15 @@ allowlisted AI browser assistant without adding telemetry or accounts.
 - A focused Cosmos input that accepts its own text.
 - A substantially stronger Shield engine supporting hosts and
   ABP/uBlock-style rules, exceptions, important/resource/party/domain
-  modifiers, cosmetic rules, and per-site allowlists.
+  modifiers, cosmetic rules, popup and ad-redirect blocking, and per-site
+  allowlists. Shield is on by default.
+- Recoverable certificate errors now show an explicit warning. The user can
+  stop or continue once; continued pages remain visibly marked red and SPACE
+  never stores a permanent certificate exception.
+- Direct HLS, DASH, MP4, WebM, and other media sources are detected alongside
+  yt-dlp inspection. The downloader is enabled by default and can be disabled.
+- Current-site cookie import/export, opt-in remote WebView debugging, and
+  import/export for local Greasemonkey-style user scripts.
 
 ## Building
 
@@ -46,6 +54,12 @@ maintainable source is checked in at the repository root.
   uses Android's foreground media-session model.
 - The media downloader is optional, does not bypass DRM, and should only be
   used for media you have the right to save.
+- Android WebView has no Chrome CRX/Manifest V3 extension API. SPACE supports
+  local user scripts with URL match rules instead of pretending incompatible
+  Chrome extensions can run.
+- Importing cookies or scripts can expose signed-in sessions or page data.
+  SPACE requires a native user action, scopes imported cookies to the current
+  site, and stores scripts in app-private storage.
 - Private tabs are excluded from history and session persistence. Android
   WebView still has a process-wide cookie jar, so private tabs are not separate
   browser containers.

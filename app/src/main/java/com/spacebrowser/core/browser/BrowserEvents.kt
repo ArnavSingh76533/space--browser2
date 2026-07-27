@@ -2,6 +2,7 @@ package com.spacebrowser.core.browser
 
 import android.content.Intent
 import android.net.Uri
+import android.webkit.SslErrorHandler
 import android.webkit.GeolocationPermissions
 import android.webkit.PermissionRequest
 import android.webkit.ValueCallback
@@ -25,6 +26,19 @@ class PendingDownload(
 class FullscreenRequest(
     val view: View,
     val callback: WebChromeClient.CustomViewCallback,
+)
+
+class SslWarningRequest(
+    val tab: Tab,
+    val handler: SslErrorHandler,
+    val url: String,
+    val reason: String,
+)
+
+data class DetectedMedia(
+    val tabId: String,
+    val url: String,
+    val kind: String,
 )
 
 /**
@@ -57,6 +71,49 @@ class BrowserEvents {
 
     // Download confirmation ------------------------------------------------------
     val downloadRequest = MutableStateFlow<PendingDownload?>(null)
+
+    // Recoverable TLS certificate error ------------------------------------------
+    val sslWarningRequest = MutableStateFlow<SslWarningRequest?>(null)
+
+    fun requestSslDecision(request: SslWarningRequest) {
+        // Never leave an older network request waiting if another error arrives.
+        sslWarningRequest.value?.handler?.cancel()
+        sslWarningRequest.value = request
+    }
+
+    fun resolveSslDecision(proceedOnce: Boolean) {
+        val request = sslWarningRequest.value ?: return
+        sslWarningRequest.value = null
+        if (proceedOnce) {
+            request.tab.isSecure = false
+            request.tab.certificateError = request.reason
+            request.tab.certificateErrorUrl = request.url
+            request.tab.errorMessage = null
+            request.handler.proceed()
+        } else {
+            request.handler.cancel()
+            request.tab.isLoading = false
+            request.tab.awaitingPaint = false
+            request.tab.errorMessage =
+                "Connection stopped because this site's certificate is not trusted."
+        }
+    }
+
+    // Media manifests/direct files observed while a page loads ------------------
+    val detectedMedia = MutableStateFlow<Map<String, List<DetectedMedia>>>(emptyMap())
+
+    fun clearDetectedMedia(tabId: String) {
+        detectedMedia.value = detectedMedia.value - tabId
+    }
+
+    fun detectMedia(tabId: String, url: String, kind: String) {
+        val current = detectedMedia.value[tabId].orEmpty()
+        if (current.any { it.url == url }) return
+        val next = (current + DetectedMedia(tabId, url, kind))
+            .sortedBy { if (it.kind == "HLS" || it.kind == "DASH") 0 else 1 }
+            .take(16)
+        detectedMedia.value = detectedMedia.value + (tabId to next)
+    }
 
     // HTML video fullscreen ------------------------------------------------------
     val fullscreenRequest = MutableStateFlow<FullscreenRequest?>(null)

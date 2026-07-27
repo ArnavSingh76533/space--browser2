@@ -257,10 +257,17 @@ fun SitePanelDialog(
         text = {
             Column {
                 Text(
-                    if (tab.isSecure) "Connection is encrypted (HTTPS)."
-                    else "Connection is NOT encrypted.",
-                    color = if (tab.isSecure) MaterialTheme.colorScheme.secondary
-                    else MaterialTheme.colorScheme.error,
+                    when {
+                        tab.certificateError != null ->
+                            "Certificate warning: ${tab.certificateError}"
+                        tab.isSecure -> "Connection is encrypted (HTTPS)."
+                        else -> "Connection is NOT encrypted."
+                    },
+                    color = if (tab.isSecure && tab.certificateError == null) {
+                        MaterialTheme.colorScheme.secondary
+                    } else {
+                        MaterialTheme.colorScheme.error
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Spacer(Modifier.padding(4.dp))

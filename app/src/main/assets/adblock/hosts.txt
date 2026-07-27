@@ -78,6 +78,13 @@ adskeeper.com
 mytarget.ru
 an.yandex.ru
 
+# Pop-under, redirect and push networks seen on streaming sites
+backbutton.videobaba.xyz
+revive.videobaba.xyz
+glmqy.nxt-psh.com
+keitaro.dsccash.com
+ronracepub.com
+
 # Analytics & telemetry
 scorecardresearch.com
 quantserve.com
@@ -125,6 +132,7 @@ onesignal.com
 pushcrew.com
 pushengage.com
 izooto.com
+stats.indianpornempire.com
 
 # Cryptominers
 coin-hive.com

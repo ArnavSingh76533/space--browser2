@@ -13,6 +13,10 @@ interface ActivityActions {
     fun printPage(tab: Tab)
     fun capturePageAndShare(tab: Tab)
     fun openSystemDownloads()
+    fun exportCurrentSiteCookies()
+    fun importCurrentSiteCookies()
+    fun importUserScript()
+    fun exportUserScripts()
     fun requestUnlock()
     fun exitApp()
 }

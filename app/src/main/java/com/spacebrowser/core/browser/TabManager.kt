@@ -4,13 +4,18 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.webkit.CookieManager
+import android.webkit.WebView
 import android.webkit.WebStorage
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.spacebrowser.BuildConfig
 import com.spacebrowser.core.adblock.AdBlocker
+import com.spacebrowser.core.adblock.AdResourceType
 import com.spacebrowser.core.db.BrowsingRepository
+import com.spacebrowser.core.extensions.UserScript
+import com.spacebrowser.core.extensions.UserScriptManager
 import com.spacebrowser.core.media.BackgroundPlaybackService
 import com.spacebrowser.core.settings.SearchEngines
 import com.spacebrowser.core.settings.SettingsRepository
@@ -35,6 +40,8 @@ class TabManagerDeps(
     val onNavigated: (Tab) -> Unit,
     val httpAllowedHosts: MutableSet<String>,
     val saveFavicon: (host: String?, icon: android.graphics.Bitmap) -> Unit,
+    val openPopup: (opener: Tab, url: String) -> Unit,
+    val scriptsFor: (url: String) -> List<UserScript>,
 )
 
 class TabManager(
@@ -42,6 +49,7 @@ class TabManager(
     private val settingsRepo: SettingsRepository,
     private val browsingRepo: BrowsingRepository,
     private val adBlocker: AdBlocker,
+    private val userScriptManager: UserScriptManager,
     val events: BrowserEvents,
     initialSettings: SpaceSettings,
 ) {
@@ -85,11 +93,25 @@ class TabManager(
                 scope.launch(Dispatchers.IO) { FaviconStore.save(appContext, h, icon) }
             }
         },
+        openPopup = { opener, url ->
+            val blocked = settings.adBlockEnabled &&
+                adBlocker.shouldBlock(url, opener.url, AdResourceType.DOCUMENT)
+            if (blocked) {
+                opener.blockedOnPage++
+                events.toast("Shield blocked an ad popup")
+            } else {
+                newTab(url)
+            }
+        },
+        scriptsFor = userScriptManager::scriptsFor,
     )
 
     // Lifecycle -----------------------------------------------------------------
 
     fun start() {
+        WebView.setWebContentsDebuggingEnabled(
+            BuildConfig.DEBUG || settings.developerToolsEnabled,
+        )
         restoreSession()
         if (tabs.isEmpty()) newTab()
         startStatsFlusher()
@@ -97,6 +119,9 @@ class TabManager(
 
     fun applySettings(s: SpaceSettings) {
         settings = s
+        WebView.setWebContentsDebuggingEnabled(
+            BuildConfig.DEBUG || s.developerToolsEnabled,
+        )
         adBlocker.updateUserRules(s.adBlockCustomRules, s.adBlockAllowlist)
         tabs.forEach { tab -> tab.webView?.let { factory.applyDynamic(it, tab, s) } }
     }
@@ -274,19 +299,43 @@ class TabManager(
                         android.net.Uri.encode(clean),
                 )
                 awaitPageSettled(tab)
-                val opened = WebAutomation.playFirstYouTubeResult(webView).getOrNull()?.let {
-                    runCatching { JSONObject(it).optBoolean("ok") }.getOrDefault(false)
-                } ?: false
-                if (!opened) {
+                var videoUrl: String? = null
+                for (attempt in 0 until 20) {
+                    val response = WebAutomation.firstYouTubeResult(webView)
+                        .getOrNull()
+                        ?.let { runCatching { JSONObject(it) }.getOrNull() }
+                    val candidate = response?.takeIf { it.optBoolean("ok") }
+                        ?.optString("url")
+                        ?.takeIf { url ->
+                            UrlUtil.hostOf(url)?.let { host ->
+                                host == "youtube.com" || host.endsWith(".youtube.com")
+                            } == true
+                        }
+                    if (!candidate.isNullOrBlank()) {
+                        videoUrl = candidate
+                        break
+                    }
+                    if (attempt < 19) delay(500)
+                }
+                if (videoUrl == null) {
                     events.toast("No YouTube video result was found")
                     onComplete(false)
                     return@launch
                 }
+                load(tab, videoUrl)
                 awaitPageSettled(tab)
-                delay(500)
-                val played = WebAutomation.media(webView, MediaCommand.Play).getOrNull()?.let {
-                    runCatching { JSONObject(it).optBoolean("ok") }.getOrDefault(false)
-                } ?: false
+                var played = false
+                for (attempt in 0 until 20) {
+                    WebAutomation.media(webView, MediaCommand.Play)
+                    delay(400)
+                    val response = WebAutomation.playbackState(webView).getOrNull()
+                    played = response?.let {
+                        runCatching { JSONObject(it).optBoolean("playing") }.getOrDefault(false)
+                    } ?: false
+                    if (played) break
+                    if (attempt < 19) delay(500)
+                }
+                if (!played) events.toast("Video opened, but playback needs a tap")
                 onComplete(played)
             } finally {
                 webView.settings.mediaPlaybackRequiresUserGesture = originalGestureSetting
@@ -317,12 +366,15 @@ class TabManager(
                     }
                     is WebStep.Wait -> delay(step.millis.coerceIn(0L, 5_000L))
                     else -> {
+                        val beforeUrl = tab.url
                         val result = WebAutomation.execute(ensureWebView(tab), step)
                         if (result.isFailure) {
                             onComplete(result)
                             return@launch
                         }
                         lastResult = result.getOrDefault(lastResult)
+                        delay(300)
+                        if (tab.isLoading || tab.url != beforeUrl) awaitPageSettled(tab)
                     }
                 }
             }

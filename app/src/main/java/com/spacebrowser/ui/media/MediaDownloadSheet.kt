@@ -47,14 +47,17 @@ fun MediaDownloadSheet(
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
-    val url = tab?.url
-    val requestContext = remember(url, tab?.webView) {
+    val pageUrl = tab?.url
+    var selectedUrl by remember(pageUrl) { mutableStateOf(pageUrl) }
+    val detectedByTab by container.browserEvents.detectedMedia.collectAsState()
+    val detected = tab?.id?.let { detectedByTab[it] }.orEmpty()
+    val requestContext = remember(pageUrl, tab?.webView) {
         MediaDownloader.RequestContext(
             userAgent = tab?.webView?.settings?.userAgentString,
-            cookies = url?.let {
+            cookies = pageUrl?.let {
                 runCatching { CookieManager.getInstance().getCookie(it) }.getOrNull()
             },
-            referer = url,
+            referer = pageUrl,
         )
     }
 
@@ -64,16 +67,17 @@ fun MediaDownloadSheet(
     val jobs by MediaDownloader.jobs.collectAsState()
     var confirmChoice by remember { mutableStateOf<MediaDownloader.Choice?>(null) }
 
-    LaunchedEffect(url) {
+    LaunchedEffect(selectedUrl) {
         preparing = true
         infoError = null
         mediaTitle = null
-        if (url == null) {
+        val target = selectedUrl
+        if (target == null) {
             preparing = false
             infoError = "Open a page with media first."
             return@LaunchedEffect
         }
-        val result = MediaDownloader.fetchInfo(context, url, requestContext)
+        val result = MediaDownloader.fetchInfo(context, target, requestContext)
         preparing = false
         result.fold(
             onSuccess = { mediaTitle = it.title ?: "Media" },
@@ -85,11 +89,29 @@ fun MediaDownloadSheet(
         Column(Modifier.padding(horizontal = 24.dp).padding(bottom = 28.dp)) {
             Text("Media downloader", style = MaterialTheme.typography.titleLarge)
             Text(
-                "Only save media you have the right to download — many sites' terms restrict this. Protected (DRM) streams are not supported.",
+                "Uses yt-dlp plus media detected while the page loads. Supports direct video " +
+                    "files and HLS/DASH manifests when the site makes them available.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 6.dp, bottom = 14.dp),
             )
+
+            if (detected.isNotEmpty()) {
+                Text("Detected on this page", style = MaterialTheme.typography.labelLarge)
+                detected.forEachIndexed { index, media ->
+                    OutlinedButton(
+                        onClick = { selectedUrl = media.url },
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                    ) {
+                        Text(
+                            "${media.kind} source ${index + 1}",
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+            }
 
             when {
                 preparing -> Row(verticalAlignment = Alignment.CenterVertically) {
@@ -169,7 +191,8 @@ fun MediaDownloadSheet(
     }
 
     val pendingChoice = confirmChoice
-    if (pendingChoice != null && url != null) {
+    val downloadUrl = selectedUrl
+    if (pendingChoice != null && downloadUrl != null) {
         AlertDialog(
             onDismissRequest = { confirmChoice = null },
             title = { Text("Download this media?") },
@@ -179,7 +202,7 @@ fun MediaDownloadSheet(
                     confirmChoice = null
                     MediaDownloader.download(
                         context = context,
-                        url = url,
+                        url = downloadUrl,
                         title = mediaTitle.orEmpty(),
                         choice = pendingChoice,
                         requestContext = requestContext,

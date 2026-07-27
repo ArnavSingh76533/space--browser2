@@ -104,4 +104,30 @@ class AdBlockEngineTest {
         assertTrue(".sponsored" in news.hide)
         assertFalse(".sponsored" in news.exceptions)
     }
+
+    @Test
+    fun `document rules stop click through ad navigation`() {
+        val engine = FilterEngine(
+            listOf(
+                "||backbutton.ad-network.example^",
+                "||popup.example^\$third-party,document",
+            ),
+        )
+        assertEquals(
+            FilterDecision.BLOCK,
+            engine.decide(
+                "https://backbutton.ad-network.example/redirect?id=4",
+                "https://video.example/watch",
+                AdResourceType.DOCUMENT,
+            ),
+        )
+        assertEquals(
+            FilterDecision.BLOCK,
+            engine.decide(
+                "https://popup.example/landing",
+                "https://video.example/watch",
+                AdResourceType.DOCUMENT,
+            ),
+        )
+    }
 }

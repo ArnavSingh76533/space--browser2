@@ -26,6 +26,17 @@ class WebViewFactory(
 
     /** The engine's default UA, captured once so it can be restored. */
     private val defaultUa: String by lazy { WebSettings.getDefaultUserAgent(appContext) }
+    private val privacyUa: String by lazy {
+        defaultUa.replace(
+            Regex("""\(Linux; Android[^)]*\)"""),
+            "(Linux; Android 10; K)",
+        )
+    }
+    private val desktopUa: String by lazy {
+        defaultUa
+            .replace(Regex("""\(Linux; Android[^)]*\)"""), "(X11; Linux x86_64)")
+            .replace(" Mobile Safari/", " Safari/")
+    }
 
     @SuppressLint("SetJavaScriptEnabled")
     fun create(
@@ -53,9 +64,9 @@ class WebViewFactory(
             builtInZoomControls = true
             displayZoomControls = false
             mediaPlaybackRequiresUserGesture = true
-            // Multiple-window popups open in the same tab; combined with the
-            // popup-blocking default this keeps navigation predictable.
-            setSupportMultipleWindows(false)
+            // WebChromeClient captures target=_blank destinations so Shield can
+            // reject ad popups and route legitimate links into real tabs.
+            setSupportMultipleWindows(true)
             javaScriptCanOpenWindowsAutomatically = false
             cacheMode = if (tab.isPrivate) WebSettings.LOAD_NO_CACHE else WebSettings.LOAD_DEFAULT
             if (tab.isPrivate) {
@@ -89,8 +100,8 @@ class WebViewFactory(
     }
 
     fun userAgentFor(tab: Tab, s: SpaceSettings): String = when {
-        tab.isDesktop -> DESKTOP_UA
-        s.uaPrivacyMode -> PRIVACY_UA
+        tab.isDesktop -> desktopUa
+        s.uaPrivacyMode -> privacyUa
         else -> defaultUa
     }
 
@@ -126,10 +137,10 @@ class WebViewFactory(
          */
         const val PRIVACY_UA =
             "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) " +
-                "Chrome/124.0.0.0 Mobile Safari/537.36"
+                "Chrome/140.0.0.0 Mobile Safari/537.36"
 
         const val DESKTOP_UA =
             "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) " +
-                "Chrome/124.0.0.0 Safari/537.36"
+                "Chrome/140.0.0.0 Safari/537.36"
     }
 }

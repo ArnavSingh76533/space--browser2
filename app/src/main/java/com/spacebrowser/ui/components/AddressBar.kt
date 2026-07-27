@@ -21,6 +21,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -51,6 +52,7 @@ fun AddressBar(
     focusRequester: FocusRequester,
     isEditing: Boolean,
     isSecure: Boolean,
+    hasCertificateError: Boolean,
     isPrivateTab: Boolean,
     isLoading: Boolean,
     progress: Int,
@@ -117,14 +119,20 @@ fun AddressBar(
             ) {
                 val leadIcon = when {
                     isEditing -> Icons.Filled.Search
+                    hasCertificateError -> Icons.Filled.Warning
                     isSecure -> Icons.Filled.Lock
                     else -> Icons.Filled.LockOpen
                 }
                 Icon(
                     leadIcon,
-                    contentDescription = if (isSecure) "Secure connection" else "Not secure",
+                    contentDescription = when {
+                        hasCertificateError -> "Certificate warning"
+                        isSecure -> "Secure connection"
+                        else -> "Not secure"
+                    },
                     tint = when {
                         isEditing -> MaterialTheme.colorScheme.onSurfaceVariant
+                        hasCertificateError -> MaterialTheme.colorScheme.error
                         isSecure -> MaterialTheme.colorScheme.secondary
                         else -> MaterialTheme.colorScheme.error
                     },

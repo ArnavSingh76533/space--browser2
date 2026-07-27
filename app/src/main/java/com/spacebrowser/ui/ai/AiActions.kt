@@ -5,6 +5,7 @@ import com.spacebrowser.core.browser.WebStep
 import com.spacebrowser.core.settings.ThemeMode
 import org.json.JSONArray
 import org.json.JSONObject
+import java.net.URLEncoder
 
 /** Allowlisted browser actions SPACE AI may request. Everything else is treated as text. */
 sealed class AiAction(val label: String) {
@@ -43,7 +44,13 @@ internal fun parseAiAction(text: String): AiAction? {
         candidate = candidate.removePrefix("```json").removePrefix("```").trim()
         candidate = candidate.removeSuffix("```").trim()
     }
+    if (!candidate.startsWith("{") || !candidate.endsWith("}")) {
+        val start = candidate.indexOf('{')
+        val end = candidate.lastIndexOf('}')
+        if (start >= 0 && end > start) candidate = candidate.substring(start, end + 1)
+    }
     if (!candidate.startsWith("{") || !candidate.endsWith("}")) return null
+    if (!candidate.contains("\"action\"", ignoreCase = true)) return null
     return try {
         val obj = JSONObject(candidate)
         when (obj.optString("action").trim().uppercase()) {
@@ -188,6 +195,52 @@ internal fun parseLocalBrowserCommand(text: String): AiAction? {
     Regex("""(?:set\s+)?volume(?:\s+to)?\s+(\d{1,3})""", RegexOption.IGNORE_CASE)
         .find(input)?.groupValues?.getOrNull(1)?.toIntOrNull()?.takeIf { it in 0..100 }
         ?.let { return AiAction.MediaControl(MediaCommand.SetVolume(it)) }
+
+    Regex(
+        """^(?:open\s+)?wikipedia\s*,?\s*(?:and\s+)?search\s+for\s+(.+?)""" +
+            """(?:\s*,?\s*(?:and|then)\s+(?:find|go\s+to)\s+(?:the\s+)?(.+?)(?:\s+section)?)?[.!]?$""",
+        RegexOption.IGNORE_CASE,
+    ).matchEntire(input)?.let { match ->
+        val query = match.groupValues[1].trim().trim(',', '.')
+        val section = match.groupValues.getOrNull(2)?.trim()?.trim(',', '.').orEmpty()
+        if (query.isNotBlank()) {
+            val url = "https://en.wikipedia.org/wiki/Special:Search?search=" +
+                URLEncoder.encode(query, Charsets.UTF_8.name())
+            return AiAction.WebActions(
+                buildList {
+                    add(WebStep.OpenUrl(url))
+                    if (section.isNotBlank()) add(WebStep.FindText(section))
+                },
+            )
+        }
+    }
+
+    Regex(
+        """^(?:enter|type|fill(?:\s+in)?)\s+["']?(.+?)["']?\s+""" +
+            """(?:in|into)\s+(?:the\s+)?(.+?)""" +
+            """(?:\s+(?:and|then)\s+(?:click|press|tap)\s+(?:the\s+)?(.+?))?[.!]?$""",
+        RegexOption.IGNORE_CASE,
+    ).matchEntire(input)?.let { match ->
+        val value = match.groupValues[1].trim()
+        val field = match.groupValues[2].trim()
+        val click = match.groupValues.getOrNull(3)?.trim().orEmpty()
+        if (value.isNotBlank() && field.isNotBlank()) {
+            return AiAction.WebActions(
+                buildList {
+                    add(WebStep.FillField(field, value))
+                    if (click.isNotBlank()) add(WebStep.ClickText(click))
+                },
+            )
+        }
+    }
+
+    Regex(
+        """^(?:find|take\s+me\s+to|go\s+to)\s+(?:the\s+)?(.+?)""" +
+            """(?:\s+(?:on|in)\s+(?:this\s+)?page)?[.!]?$""",
+        RegexOption.IGNORE_CASE,
+    ).matchEntire(input)?.groupValues?.getOrNull(1)?.trim()
+        ?.takeIf { it.isNotBlank() }
+        ?.let { return AiAction.WebActions(listOf(WebStep.FindText(it))) }
 
     return null
 }
