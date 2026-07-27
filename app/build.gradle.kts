@@ -107,4 +107,5 @@ dependencies {
     implementation(libs.youtubedl.aria2c)
 
     testImplementation(libs.junit)
+    testImplementation(libs.json)
 }
